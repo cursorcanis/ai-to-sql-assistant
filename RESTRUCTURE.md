@@ -123,7 +123,9 @@ Append one row per landed change.
 | 6 | 2026-07-27 | Fixed safety check, empty input, error handling | `app.py` | done |
 | 7 | 2026-07-27 | Bounded API timeout, surfaced API errors | `app.py` | done |
 | 8 | 2026-07-27 | Untracked `.claude/` tooling config | `.gitignore` | done |
-| 9 | 2026-07-27 | Port SQLite → Supabase Postgres | `app.py`, `migrations/`, `requirements.txt`, `.env.example` | code ready, **untested** |
+| 9 | 2026-07-27 | Port SQLite → Supabase Postgres | `app.py`, `migrations/`, `requirements.txt`, `.env.example` | done |
+| 10 | 2026-07-27 | Migrations applied to Supabase, verified | `scripts/`, `migrations/` | done |
+| 11 | 2026-07-27 | Removed `sample_database.db` | — | done |
 
 ### Notes on change #9 — Postgres migration
 
@@ -148,8 +150,51 @@ break on casts like `::int`.
 `GRANT SELECT` only, no `CREATE`, `statement_timeout = 10s`. `is_safe_sql` stays as the
 friendly first check, but the role is what actually guarantees it.
 
-Still to do: run both migrations in Supabase, fill `DATABASE_URL` in `.env`, test, then
-delete `sample_database.db` once Postgres is confirmed working.
+### Notes on change #10 — applying the migrations
+
+Four connection-string problems, worth recording because none are obvious:
+
+1. **A `#` in the password silently truncates the URL.** `#` starts a URI fragment, so
+   the host and port were being discarded. Keep Supabase passwords alphanumeric.
+2. **`db.<ref>.supabase.co` does not resolve.** Supabase's direct-connection host is
+   IPv6-only on new projects. The pooler hosts are IPv4 — use those.
+3. **The pooler needs the project ref in the username**: `postgres.<ref>`, not
+   `postgres`. A plain username gives an authentication error that looks like a wrong
+   password. (Diagnosed by connecting with a deliberately bogus ref: that returns
+   `ENOTFOUND tenant/user`, proving the real failure was the password.)
+4. **Session pooler (5432) for migrations, transaction pooler (6543) for the app.**
+   DDL wants a real session.
+
+`002` also had to change twice: Supabase's `postgres` user is *not* a true superuser, so
+neither `DROP ROLE` (grants depend on it) nor `DROP OWNED BY` (not a member of the role)
+works. It now updates the password in place via a `DO` block if the role already exists.
+
+The role password is substituted into the SQL at run time from
+`SQL_ASSISTANT_RO_PASSWORD`, so `migrations/002_readonly_role.sql` stays safe to commit.
+
+**Read-only role verified** — all five refused at the database level:
+
+| Attempted | Result |
+| --- | --- |
+| `DELETE FROM customers` | permission denied for table customers |
+| `INSERT INTO customers` | permission denied for table customers |
+| `UPDATE products` | permission denied for table products |
+| `CREATE TABLE evil` | permission denied for schema public |
+| `DROP TABLE orders` | must be owner of table orders |
+
+`rolsuper = false`, `rolcreatedb = false`, `SELECT` works.
+
+**App verified against Postgres**, six cases: top spender returns
+`Carla Rodriguez, 1720.00` — identical to the SQLite result. The model emits snake_case
+unprompted and used `DATE_TRUNC` for the monthly query, confirming the dialect change.
+
+### Notes on change #11
+
+`sample_database.db` deleted; nothing references it now that the DB layer is Postgres.
+Recoverable from git history if ever needed.
+
+Still to do: deploy to Streamlit Cloud (secrets go in the app's Secrets panel, not `.env`),
+and delete `SUPABASE_ADMIN_URL` from `.env` now that migrations have run.
 
 ### Notes on change #7 — the "stuck in a loop" report
 

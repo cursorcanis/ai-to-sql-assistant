@@ -4,11 +4,25 @@
 -- generated query slips past is_safe_sql, the database itself will refuse to
 -- execute a write. The app should NEVER connect as the postgres superuser.
 --
--- BEFORE RUNNING: replace CHANGE_ME_TO_A_STRONG_PASSWORD below with a real
--- password. Do not commit the edited version of this file -- put the password
--- only in .env (local) and Streamlit Cloud Secrets (deployed).
+-- The password is NOT stored in this file. scripts/run_migrations.py replaces
+-- ${RO_PASSWORD} below with the value of SQL_ASSISTANT_RO_PASSWORD from .env,
+-- so the secret lives only there and in Streamlit Cloud Secrets. That keeps
+-- this file safe to commit.
 
-CREATE ROLE sql_assistant_ro WITH LOGIN PASSWORD 'CHANGE_ME_TO_A_STRONG_PASSWORD';
+-- Re-runnable without dropping: Supabase's "postgres" user is not a true
+-- superuser and may not drop objects owned by another role, so update the
+-- password in place if the role already exists.
+DO $$
+DECLARE
+    pw text := '${RO_PASSWORD}';
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'sql_assistant_ro') THEN
+        EXECUTE format('ALTER ROLE sql_assistant_ro WITH LOGIN PASSWORD %L', pw);
+    ELSE
+        EXECUTE format('CREATE ROLE sql_assistant_ro WITH LOGIN PASSWORD %L', pw);
+    END IF;
+END
+$$;
 
 -- Allow connecting and reading, nothing else.
 GRANT CONNECT ON DATABASE postgres TO sql_assistant_ro;
