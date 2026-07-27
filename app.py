@@ -1,17 +1,36 @@
 import streamlit as st
-import sqlite3
+from streamlit.errors import StreamlitSecretNotFoundError
 import re
 from dotenv import load_dotenv
 import os
 from openai import OpenAI, APIError, APITimeoutError, RateLimitError
+from sqlalchemy import create_engine
+from sqlalchemy.exc import SQLAlchemyError
 
-# Load environment variables and initialize the OpenRouter client.
-# OpenRouter is OpenAI-API-compatible, so we keep the official OpenAI SDK
-# and just point it at a different base URL.
 load_dotenv()
-openrouter_key = os.getenv("OPENROUTER_API_KEY")
+
+
+def get_secret(name):
+    """Read config from Streamlit secrets first, then the environment.
+
+    Streamlit Cloud has no .env file — secrets come from the app's Secrets
+    panel. Locally there are no Streamlit secrets, so .env is used. Checking
+    both means the same code runs in either place.
+    """
+    try:
+        if name in st.secrets:
+            return st.secrets[name]
+    except (FileNotFoundError, StreamlitSecretNotFoundError):
+        pass  # No secrets.toml locally — expected.
+    return os.getenv(name)
+
+
+openrouter_key = get_secret("OPENROUTER_API_KEY")
 if not openrouter_key:
-    st.error("OPENROUTER_API_KEY is not set. Add it to your .env file.")
+    st.error(
+        "OPENROUTER_API_KEY is not set. Add it to .env locally, or to the "
+        "Secrets panel on Streamlit Cloud."
+    )
     st.stop()
 
 # The SDK defaults to a 600s read timeout with 2 retries — a stalled or
@@ -25,6 +44,14 @@ client = OpenAI(
 )
 
 MODEL = "nvidia/nemotron-3-super-120b-a12b:free"
+
+DATABASE_URL = get_secret("DATABASE_URL")
+if not DATABASE_URL:
+    st.error(
+        "DATABASE_URL is not set. Add your Supabase connection string to .env "
+        "locally, or to the Secrets panel on Streamlit Cloud."
+    )
+    st.stop()
 
 # Verbs that must never appear as a bare word in a query we are willing to run.
 FORBIDDEN_VERBS = (
@@ -82,11 +109,16 @@ def generate_sql_from_question(question):
             {
                 "role": "system",
                 "content": (
-                    "You are an assistant that converts natural language questions into SQL queries. "
-                    "Only use the tables and columns that exist in this SQLite schema: "
-                    "TABLE customers(CustomerID, Name, City, Email); "
-                    "TABLE products(ProductID, ProductName, Category, Price); "
-                    "TABLE orders(OrderID, CustomerID, ProductID, OrderDate, Quantity, Total). "
+                    "You are an assistant that converts natural language questions into "
+                    "PostgreSQL queries. Only use the tables and columns that exist in "
+                    "this schema: "
+                    "TABLE customers(customer_id, name, city, email); "
+                    "TABLE products(product_id, product_name, category, price); "
+                    "TABLE orders(order_id, customer_id, product_id, order_date, quantity, total). "
+                    "All identifiers are lowercase snake_case — never quote them. "
+                    "order_date is a DATE column, so use PostgreSQL date functions "
+                    "such as EXTRACT or DATE_TRUNC rather than SQLite's strftime. "
+                    "Write a single read-only SELECT statement. "
                     "Return SQL only, no explanation."
                 )
             },
@@ -108,35 +140,46 @@ def generate_sql_from_question(question):
 
     return sql_query
 
-DB_PATH = "sample_database.db"
+@st.cache_resource
+def get_engine():
+    """One pooled engine for the whole app.
 
-
-# Run SQL safely
-def run_sql_query(query):
-    """Return (rows, columns) on success, or (None, error_message) on failure.
-
-    The connection is opened read-only, so a query that slips past is_safe_sql
-    still cannot modify the database.
+    Streamlit re-runs this script top to bottom on every interaction, so
+    connecting per query would exhaust a free-tier connection limit quickly.
+    cache_resource keeps a single engine alive across reruns and sessions.
     """
-    connection = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True)
+    return create_engine(
+        DATABASE_URL,
+        pool_size=2,
+        max_overflow=0,
+        pool_pre_ping=True,   # a pooled connection may have been closed by the
+        pool_recycle=300,     # server while idle; check and recycle it
+    )
 
+
+def run_sql_query(query):
+    """Return (rows, columns) on success, or (None, error_message) on failure."""
     try:
-        cursor = connection.cursor()
-        cursor.execute(query)
-        results = cursor.fetchall()
+        with get_engine().connect() as connection:
+            # Second line of defence behind the read-only role: even a write
+            # this transaction was somehow permitted is refused.
+            connection.exec_driver_sql("SET TRANSACTION READ ONLY")
 
-        # A statement that returns no result set leaves description as None.
-        if cursor.description is None:
-            return None, "That query returned no result set."
+            # exec_driver_sql, not text(): text() would parse ':' in the query
+            # as a bind parameter and choke on casts like '::int'.
+            result = connection.exec_driver_sql(query)
 
-        columns = [description[0] for description in cursor.description]
-        return results, columns
+            if result.returns_rows is False:
+                return None, "That query returned no result set."
 
-    except sqlite3.Error as e:
-        return None, str(e)
+            columns = list(result.keys())
+            rows = result.fetchall()
+            return rows, columns
 
-    finally:
-        connection.close()
+    except SQLAlchemyError as e:
+        # __cause__ is the underlying psycopg2 error, which is far more
+        # readable than SQLAlchemy's wrapper.
+        return None, str(e.__cause__ or e)
 
 
 # --- Streamlit UI ---

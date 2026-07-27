@@ -123,6 +123,33 @@ Append one row per landed change.
 | 6 | 2026-07-27 | Fixed safety check, empty input, error handling | `app.py` | done |
 | 7 | 2026-07-27 | Bounded API timeout, surfaced API errors | `app.py` | done |
 | 8 | 2026-07-27 | Untracked `.claude/` tooling config | `.gitignore` | done |
+| 9 | 2026-07-27 | Port SQLite → Supabase Postgres | `app.py`, `migrations/`, `requirements.txt`, `.env.example` | code ready, **untested** |
+
+### Notes on change #9 — Postgres migration
+
+Decision: Supabase, porting the existing 24 rows so results match what was tested.
+
+**Columns renamed to snake_case.** Postgres folds unquoted identifiers to lowercase, so
+`CustomerID` would need double-quoting in every generated query — an unreliable thing to
+ask of an LLM. `customer_id` works unquoted.
+
+**Connection pooling added.** Streamlit reruns the script on every interaction; the old
+connect-per-query pattern was free with SQLite but would exhaust a free-tier Postgres
+connection limit. One `@st.cache_resource` engine now, `pool_size=2`, `pool_pre_ping`
+for connections the server dropped while idle.
+
+**`exec_driver_sql`, not `text()`** — `text()` reads `:` as a bind parameter and would
+break on casts like `::int`.
+
+**Secrets now read from `st.secrets` first, then `os.getenv`.** Streamlit Cloud has no
+`.env`; local dev has no `secrets.toml`. Same code path works in both.
+
+**Read-only enforcement moved into the database** (`migrations/002_readonly_role.sql`):
+`GRANT SELECT` only, no `CREATE`, `statement_timeout = 10s`. `is_safe_sql` stays as the
+friendly first check, but the role is what actually guarantees it.
+
+Still to do: run both migrations in Supabase, fill `DATABASE_URL` in `.env`, test, then
+delete `sample_database.db` once Postgres is confirmed working.
 
 ### Notes on change #7 — the "stuck in a loop" report
 
