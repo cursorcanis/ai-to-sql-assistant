@@ -1,8 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(python -c ' *)",
-      "Bash(curl -s -o /dev/null -w \"server still responsive: HTTP %{http_code}\\\\n\" http://localhost:8501/_stcore/health)"
-    ]
-  }
-}

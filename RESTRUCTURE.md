@@ -121,6 +121,26 @@ Append one row per landed change.
 | 4 | 2026-07-27 | `git init`, initial commit, pushed to GitHub | all | done |
 | 5 | 2026-07-27 | Local end-to-end test via Streamlit `AppTest` | — | done |
 | 6 | 2026-07-27 | Fixed safety check, empty input, error handling | `app.py` | done |
+| 7 | 2026-07-27 | Bounded API timeout, surfaced API errors | `app.py` | done |
+| 8 | 2026-07-27 | Untracked `.claude/` tooling config | `.gitignore` | done |
+
+### Notes on change #7 — the "stuck in a loop" report
+
+Not a loop. Streamlit dims stale elements while re-running, so a spinner sitting above
+the *previous* run's output reads as if the app is cycling. There is no cycle in the
+script — it runs top to bottom once per submit.
+
+Chasing it did surface a real bug: the OpenAI SDK defaults to a **600s read timeout with
+2 retries**. A stalled or rate-limited call could hold the spinner for ~30 minutes with
+no error, indistinguishable from a hang. OpenRouter's free tier (~20 req/min) returns 429
+under the kind of load our testing generated.
+
+Now `timeout=30.0`, `max_retries=1`, `max_tokens=500`, with `APITimeoutError`,
+`RateLimitError` and `APIError` each caught and shown as an actionable message.
+Measured latency for reference: 0.6s–3.5s per call.
+
+**Confirmed working in the browser** by the user, all four cases: blank input, destructive
+request, normal question, zero-match question.
 
 ### Notes on change #5 — local test run
 
