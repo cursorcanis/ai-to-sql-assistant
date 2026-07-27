@@ -119,6 +119,57 @@ Append one row per landed change.
 | 2 | 2026-07-27 | Added secrets/dependency scaffolding | `.env`, `.env.example`, `.gitignore`, `requirements.txt` | done |
 | 3 | 2026-07-27 | Verified provider switch against live API | — | done |
 | 4 | 2026-07-27 | `git init`, initial commit, pushed to GitHub | all | done |
+| 5 | 2026-07-27 | Local end-to-end test via Streamlit `AppTest` | — | done |
+| 6 | 2026-07-27 | Fixed safety check, empty input, error handling | `app.py` | done |
+
+### Notes on change #5 — local test run
+
+Server booted on :8502 (`/_stcore/health` → `ok`, `GET /` → 200). App driven headlessly
+with `streamlit.testing.v1.AppTest`, which executes the real script and real widgets.
+
+**Three realistic questions — all correct**, valid SQL and correct result sets:
+top spender (`Carla Rodriguez, 1720.0`), Electronics products (2 rows), orders per
+city (6 rows). No exceptions, no errors.
+
+**Destructive request blocked**: "Delete all customers from Boston" generated
+`DELETE FROM customers WHERE City='Boston'` and the safety gate stopped it.
+
+**Two §2 issues confirmed by test, still unfixed:**
+
+- *Empty input*: submitting a blank form still calls the API. The model invents an
+  unrelated query (a HAVING COUNT > 5 join) and the user gets a confusing empty table.
+- *`is_safe_sql` false positives*: direct probing shows it blocks legitimate read-only
+  queries — `WHERE Status = 'UPDATED'` and `LIKE '%CREATE%'` are both rejected. It also
+  "catches" `SELECT ...; DROP TABLE orders;` only because *DROP* is in the wordlist, not
+  because it recognises the statement chain. A `SELECT`-only + single-statement parse
+  is the actual fix.
+
+### Notes on change #6 — safety and input handling
+
+Closes five §2 items.
+
+**`is_safe_sql` rewritten as an allowlist.** String literals and comments are blanked
+first (so `WHERE Status = 'UPDATED'` is judged on its SQL, not its data), the query must
+be exactly one statement, and it must begin with `SELECT` or `WITH`. The forbidden-verb
+regex stays as defence in depth, now word-anchored and extended with `ATTACH`, `PRAGMA`,
+`VACUUM`, `TRUNCATE`, `REPLACE`, `GRANT`, `REVOKE`, `REINDEX`.
+
+Verified 14/14 on a table of allow/block cases: the two legitimate queries the old
+version rejected now pass, and chained statements, comment-hidden statements,
+`ATTACH DATABASE`, and `PRAGMA writable_schema` are all blocked.
+
+**Connection is read-only** — `file:...?mode=ro` with `uri=True`. Confirmed by attempting
+a `DELETE` through it: *"attempt to write a readonly database"*, 8 customers intact. This
+is the real protection; `is_safe_sql` is now the friendly first line, not the only one.
+
+**Other fixes:** empty question short-circuits before the API call; empty model response
+handled; `cursor.description is None` guarded; `except Exception` narrowed to
+`sqlite3.Error`; `connection.close()` moved to `finally`; doubled "Error running SQL: SQL
+error:" prefix removed; zero-row results show a message instead of an empty grid;
+spinner added during generation.
+
+Re-driven through `AppTest`: blank input warns with no API call, `DELETE` request blocked,
+normal question returns data, no-match question reports cleanly.
 
 ### Notes on change #1 — provider switch
 
