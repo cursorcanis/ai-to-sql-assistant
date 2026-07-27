@@ -126,6 +126,31 @@ Append one row per landed change.
 | 9 | 2026-07-27 | Port SQLite → Supabase Postgres | `app.py`, `migrations/`, `requirements.txt`, `.env.example` | done |
 | 10 | 2026-07-27 | Migrations applied to Supabase, verified | `scripts/`, `migrations/` | done |
 | 11 | 2026-07-27 | Removed `sample_database.db` | — | done |
+| 12 | 2026-07-27 | `@claude` GitHub Actions workflow | `.github/`, `CLAUDE.md` | done |
+| 13 | 2026-07-27 | Model now explains the query before returning it | `app.py` | done |
+
+### Notes on change #13 — explanation before SQL
+
+The prompt now asks for a plain-English explanation followed by the statement.
+That alone would have broken the app: `is_safe_sql` requires the query to *start*
+with `SELECT`/`WITH`, so prose in front of it would fail every request, and
+`st.code(..., language="sql")` would syntax-highlight the prose.
+
+`generate_sql_from_question` therefore returns `(explanation, sql)` instead of a
+bare string. `split_explanation_and_sql` cuts at the first line matching
+`^\s*(SELECT|WITH)\b`; everything above is the explanation. If no statement line
+is found the whole reply is returned as SQL, so `is_safe_sql` rejects it and the
+user sees what the model actually said rather than a silent failure.
+
+Fence-stripping stays — the prompt asks for no markdown fences, but models add
+them anyway — and now keeps the prose before the fence as the explanation.
+
+`max_tokens` raised 500 → 900 to fit both parts.
+
+Side effect worth knowing: "Delete all customers from Boston" now returns a
+`SELECT` of Boston customers rather than a `DELETE`, so it no longer trips the
+safety error. Both safety layers are unchanged and still verified; the model is
+simply interpreting the request as a read.
 
 ### Notes on change #9 — Postgres migration
 

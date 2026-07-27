@@ -104,7 +104,7 @@ def generate_sql_from_question(question):
         # model, so turn it off.
         extra_body={"reasoning": {"enabled": False}},
         temperature=0,  # model default is 1.0 — far too loose for SQL
-        max_tokens=500,  # a SELECT for three small tables; bounds a runaway reply
+        max_tokens=900,  # explanation + SQL; bounds a runaway reply
         messages=[
             {
                 "role": "system",
@@ -119,26 +119,48 @@ def generate_sql_from_question(question):
                     "order_date is a DATE column, so use PostgreSQL date functions "
                     "such as EXTRACT or DATE_TRUNC rather than SQLite's strftime. "
                     "Write a single read-only SELECT statement. "
-                    "Return SQL only, no explanation."
+                    "Before returning SQL, briefly explain what the query will do "
+                    "in as many sentences as it takes. Then return SQL only, with "
+                    "no markdown fences."
                 )
             },
             {"role": "user", "content": question}
         ]
     )
 
-    sql_query = response.choices[0].message.content or ""
-    sql_query = sql_query.strip()
+    reply = (response.choices[0].message.content or "").strip()
 
-    # Remove markdown ``` fences and optional "sql" labels
-    if "```" in sql_query:
-        parts = sql_query.split("```")
+    # Remove markdown ``` fences and optional "sql" labels. The prompt asks for
+    # no fences, but models add them anyway often enough to keep this.
+    if "```" in reply:
+        parts = reply.split("```")
         if len(parts) >= 2:
+            prose = parts[0].strip()
             inner = parts[1].lstrip()
             if inner.lower().startswith("sql"):
                 inner = inner[3:].lstrip()
-            sql_query = inner.strip()
+            return prose, inner.strip()
 
-    return sql_query
+    return split_explanation_and_sql(reply)
+
+
+def split_explanation_and_sql(reply):
+    """Separate the model's prose from the statement itself.
+
+    The prompt asks for an explanation followed by SQL, so the reply is two
+    things in one string. is_safe_sql requires the query to *start* with
+    SELECT/WITH, and the UI needs to syntax-highlight the SQL alone — so split
+    at the first line that opens a statement and treat everything above it as
+    the explanation.
+    """
+    lines = reply.splitlines()
+    for i, line in enumerate(lines):
+        if re.match(r"^\s*(SELECT|WITH)\b", line, re.IGNORECASE):
+            return "\n".join(lines[:i]).strip(), "\n".join(lines[i:]).strip()
+
+    # No statement found — hand the whole thing back as SQL so the safety
+    # check rejects it and the user sees what the model actually said.
+    return "", reply
 
 @st.cache_resource
 def get_engine():
@@ -202,7 +224,7 @@ if submitted:
     # 2. Generate SQL
     try:
         with st.spinner("Generating SQL..."):
-            sql = generate_sql_from_question(user_question)
+            explanation, sql = generate_sql_from_question(user_question)
     except APITimeoutError:
         st.error("The model took too long to respond. Please try again.")
         st.stop()
@@ -214,6 +236,10 @@ if submitted:
     except APIError as e:
         st.error(f"The model could not be reached: {e}")
         st.stop()
+
+    if explanation:
+        st.subheader("What this query does")
+        st.write(explanation)
 
     st.subheader("Generated SQL")
     st.code(sql, language="sql")
