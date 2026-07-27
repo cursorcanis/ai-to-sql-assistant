@@ -117,6 +117,8 @@ Append one row per landed change.
 | 0 | 2026-07-27 | Read existing code, wrote this tracker | `RESTRUCTURE.md` | done |
 | 1 | 2026-07-27 | Switched provider OpenAI → OpenRouter | `app.py` | done |
 | 2 | 2026-07-27 | Added secrets/dependency scaffolding | `.env`, `.env.example`, `.gitignore`, `requirements.txt` | done |
+| 3 | 2026-07-27 | Verified provider switch against live API | — | done |
+| 4 | 2026-07-27 | `git init`, initial commit, pushed to GitHub | all | done |
 
 ### Notes on change #1 — provider switch
 
@@ -137,7 +139,23 @@ base URL, key, and model name changed. No client library swap needed.
 Still open from §2, unchanged by this work: the broken `is_safe_sql` substring check,
 the read-write DB connection, and the overloaded `run_sql_query` return value.
 
-**Not yet verified against the live API** — `.env` still holds a placeholder key.
+### Notes on change #3 — live verification
+
+End-to-end test with a real key: "Which customers spent the most in total?" produced a
+correct `JOIN` + `GROUP BY` query with no markdown fences, which then ran against
+`sample_database.db` and returned `Carla Rodriguez, 1720.0`. The `reasoning` field on the
+response came back empty, confirming `enabled: False` takes effect.
+
+### Notes on change #4 — version control
+
+`git init -b main`, remote `origin` →
+`https://github.com/cursorcanis/ai-to-sql-assistant.git`.
+
+`.gitignore` was authored **before** the first commit, so `.env` was never staged.
+Verified post-push: `.env` is untracked, and `git log -p --all` contains zero key matches.
+
+Six files tracked: `.env.example`, `.gitignore`, `RESTRUCTURE.md`, `app.py`,
+`requirements.txt`, `sample_database.db`.
 
 ---
 
