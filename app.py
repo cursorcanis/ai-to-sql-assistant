@@ -3,7 +3,7 @@ import sqlite3
 import re
 from dotenv import load_dotenv
 import os
-from openai import OpenAI
+from openai import OpenAI, APIError, APITimeoutError, RateLimitError
 
 # Load environment variables and initialize the OpenRouter client.
 # OpenRouter is OpenAI-API-compatible, so we keep the official OpenAI SDK
@@ -14,9 +14,14 @@ if not openrouter_key:
     st.error("OPENROUTER_API_KEY is not set. Add it to your .env file.")
     st.stop()
 
+# The SDK defaults to a 600s read timeout with 2 retries — a stalled or
+# rate-limited request would leave the user staring at a spinner for up to
+# half an hour. Fail fast instead and let them retry.
 client = OpenAI(
     api_key=openrouter_key,
     base_url="https://openrouter.ai/api/v1",
+    timeout=30.0,
+    max_retries=1,
 )
 
 MODEL = "nvidia/nemotron-3-super-120b-a12b:free"
@@ -72,6 +77,7 @@ def generate_sql_from_question(question):
         # model, so turn it off.
         extra_body={"reasoning": {"enabled": False}},
         temperature=0,  # model default is 1.0 — far too loose for SQL
+        max_tokens=500,  # a SELECT for three small tables; bounds a runaway reply
         messages=[
             {
                 "role": "system",
@@ -151,8 +157,20 @@ if submitted:
         st.stop()
 
     # 2. Generate SQL
-    with st.spinner("Generating SQL..."):
-        sql = generate_sql_from_question(user_question)
+    try:
+        with st.spinner("Generating SQL..."):
+            sql = generate_sql_from_question(user_question)
+    except APITimeoutError:
+        st.error("The model took too long to respond. Please try again.")
+        st.stop()
+    except RateLimitError:
+        st.error(
+            "Rate limit reached on the free tier. Wait a moment and try again."
+        )
+        st.stop()
+    except APIError as e:
+        st.error(f"The model could not be reached: {e}")
+        st.stop()
 
     st.subheader("Generated SQL")
     st.code(sql, language="sql")
