@@ -128,6 +128,52 @@ Append one row per landed change.
 | 11 | 2026-07-27 | Removed `sample_database.db` | — | done |
 | 12 | 2026-07-27 | `@claude` GitHub Actions workflow | `.github/`, `CLAUDE.md` | done |
 | 13 | 2026-07-27 | Model now explains the query before returning it | `app.py` | done |
+| 14 | 2026-07-27 | Migration ledger; each file applies once | `scripts/run_migrations.py` | done |
+| 15 | 2026-07-27 | 17-table analytics star schema + 326k rows | `migrations/003`, `scripts/seed_data.py` | done |
+| 16 | 2026-07-27 | Prompt schema introspected instead of hardcoded | `app.py` | done |
+
+### Notes on changes #14–16 — analytics schema
+
+**Ledger.** `schema_migrations(filename, checksum, applied_at)`. Files run once;
+re-running is a no-op. This mattered because `001` drops and recreates its tables —
+a second run would have destroyed data. Editing an applied file warns rather than
+silently diverging. `--status` lists state, `--force <file>` re-applies deliberately.
+
+**Schema.** 17 tables, deliberately shaped for advanced practice:
+
+| Technique | Where it lives |
+| --- | --- |
+| Recursive CTEs | `employees.manager_id` (5 levels), `categories.parent_category_id` (3) |
+| Window functions | 6 years of orders with real trend and seasonality |
+| Temporal joins | `product_price_history` — type-2 SCD, `valid_from`/`valid_to` |
+| Many-to-many | `order_items`, `campaign_customers` |
+| Multi-grain facts | `order_items`, `returns`, `payments`, `inventory_snapshots` |
+| Time intelligence | `dim_date` with fiscal year/quarter |
+| Geography | `regions → countries → cities` with lat/long for Power BI maps |
+
+**Sizing.** The binding limit is Supabase's ~500 MB, not Streamlit — Streamlit
+Cloud hosts the app (~1 GB RAM) and stores nothing. Seeded at 326,417 rows /
+**47 MB**, about 10% of the free tier.
+
+Data is generated, not committed: 326k rows of `INSERT` would be an unreviewable
+diff. `random.seed(42)` makes it reproducible. It is deliberately non-uniform —
+measured on the result, December 2023 is ~3x June 2023, and revenue grows ~12%
+a year, so seasonality and YoY queries find real signal.
+
+**Introspection.** The prompt now calls `describe_schema()` rather than carrying a
+hardcoded schema — closing the duplication issue from §2. Foreign keys are read
+from `pg_catalog`: `information_schema.constraint_column_usage` only shows
+constraints on tables the role *owns*, and the read-only role owns nothing, so it
+returned **zero** foreign keys on the first attempt.
+
+**Row cap.** `MAX_DISPLAY_ROWS = 1000`, enforced with `fetchmany` rather than
+`fetchall`. `order_items` holds 136k rows; materialising that would exhaust the
+app's memory on Streamlit Cloud.
+
+Verified end to end: monthly revenue with running total and MoM change
+(`SUM(SUM(...)) OVER`, `LAG`), a recursive org-chart depth query over all 200
+employees, and a three-fact comparison where the model correctly aggregated each
+fact in its own CTE before joining instead of double counting.
 
 ### Notes on change #13 — explanation before SQL
 

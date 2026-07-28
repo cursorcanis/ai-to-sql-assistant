@@ -45,6 +45,11 @@ client = OpenAI(
 
 MODEL = "nvidia/nemotron-3-super-120b-a12b:free"
 
+# order_items alone holds ~136k rows. Streamlit Cloud gives the app about 1 GB
+# of RAM, and every returned row is materialised in it — so cap what we fetch
+# rather than letting a stray SELECT * take the app down.
+MAX_DISPLAY_ROWS = 1000
+
 DATABASE_URL = get_secret("DATABASE_URL")
 if not DATABASE_URL:
     st.error(
@@ -95,6 +100,58 @@ def is_safe_sql(query):
     # Belt and braces: catch a write verb smuggled into a subquery.
     return not re.search(FORBIDDEN_VERBS, statement, re.IGNORECASE)
 
+@st.cache_data(ttl=3600, show_spinner=False)
+def describe_schema():
+    """Read the live schema so the prompt cannot drift from the database.
+
+    The schema used to be hardcoded in the prompt. With 17 tables that is both
+    unwieldy and a bug waiting to happen — change a column, forget the prompt,
+    and the model writes SQL against a table shape that no longer exists.
+    Foreign keys are included because on a star schema the model needs to know
+    how to join, not just what exists.
+    """
+    with get_engine().connect() as connection:
+        columns = connection.exec_driver_sql("""
+            SELECT table_name, column_name
+            FROM information_schema.columns
+            WHERE table_schema = 'public'
+              AND table_name <> 'schema_migrations'
+            ORDER BY table_name, ordinal_position
+        """).fetchall()
+
+        # pg_catalog rather than information_schema: the latter's
+        # constraint_column_usage only reveals constraints on tables the role
+        # OWNS, and the read-only role owns nothing — it silently returns zero
+        # foreign keys. pg_catalog is readable by any role.
+        keys = connection.exec_driver_sql("""
+            SELECT src.relname, a.attname, tgt.relname, fa.attname
+            FROM pg_constraint c
+            JOIN pg_class src ON src.oid = c.conrelid
+            JOIN pg_class tgt ON tgt.oid = c.confrelid
+            JOIN unnest(c.conkey)  WITH ORDINALITY AS k(attnum, ord) ON TRUE
+            JOIN unnest(c.confkey) WITH ORDINALITY AS f(attnum, ord)
+              ON f.ord = k.ord
+            JOIN pg_attribute a  ON a.attrelid  = c.conrelid  AND a.attnum  = k.attnum
+            JOIN pg_attribute fa ON fa.attrelid = c.confrelid AND fa.attnum = f.attnum
+            WHERE c.contype = 'f'
+              AND src.relnamespace = 'public'::regnamespace
+            ORDER BY src.relname, k.ord
+        """).fetchall()
+
+    tables = {}
+    for table, column in columns:
+        tables.setdefault(table, []).append(column)
+
+    schema = "\n".join(
+        f"TABLE {table}({', '.join(cols)});" for table, cols in tables.items()
+    )
+    joins = "\n".join(
+        f"{table}.{column} -> {ftable}.{fcolumn}"
+        for table, column, ftable, fcolumn in keys
+    )
+    return f"{schema}\n\nForeign keys:\n{joins}"
+
+
 # Function to convert question → SQL
 def generate_sql_from_question(question):
     response = client.chat.completions.create(
@@ -109,15 +166,26 @@ def generate_sql_from_question(question):
             {
                 "role": "system",
                 "content": (
-                    "You are an assistant that converts natural language questions into "
-                    "PostgreSQL queries. Only use the tables and columns that exist in "
-                    "this schema: "
-                    "TABLE customers(customer_id, name, city, email); "
-                    "TABLE products(product_id, product_name, category, price); "
-                    "TABLE orders(order_id, customer_id, product_id, order_date, quantity, total). "
+                    "You are an assistant that converts natural language questions "
+                    "into PostgreSQL queries. Only use the tables and columns in "
+                    "this schema:\n\n"
+                    f"{describe_schema()}\n\n"
+                    "Notes on the data model:\n"
+                    "- dim_date is a date dimension; join order_date to "
+                    "dim_date.date_key for year/quarter/fiscal period analysis.\n"
+                    "- employees.manager_id and categories.parent_category_id are "
+                    "self-referencing hierarchies; use recursive CTEs to walk them.\n"
+                    "- product_price_history is a type-2 slowly changing dimension: "
+                    "match a date between valid_from and valid_to (valid_to IS NULL "
+                    "means current).\n"
+                    "- order_items, returns, payments and inventory_snapshots are "
+                    "facts at different grains. Aggregate each separately before "
+                    "joining, or totals will be double counted.\n\n"
                     "All identifiers are lowercase snake_case — never quote them. "
-                    "order_date is a DATE column, so use PostgreSQL date functions "
-                    "such as EXTRACT or DATE_TRUNC rather than SQLite's strftime. "
+                    "Use PostgreSQL syntax, including window functions and CTEs "
+                    "where they make the query clearer. "
+                    f"Unless the question asks for everything, add a LIMIT of at "
+                    f"most {MAX_DISPLAY_ROWS} rows. "
                     "Write a single read-only SELECT statement. "
                     "Before returning SQL, briefly explain what the query will do "
                     "in as many sentences as it takes. Then return SQL only, with "
@@ -195,7 +263,10 @@ def run_sql_query(query):
                 return None, "That query returned no result set."
 
             columns = list(result.keys())
-            rows = result.fetchall()
+            # Fetch one more than the cap so we can tell "exactly at the cap"
+            # from "there was more". Never materialise the whole result set:
+            # a SELECT * over order_items would be 136k rows.
+            rows = result.fetchmany(MAX_DISPLAY_ROWS + 1)
             return rows, columns
 
     except SQLAlchemyError as e:
@@ -264,6 +335,18 @@ if submitted:
     elif not results:
         st.info("That query ran successfully but matched no rows.")
     else:
+        truncated = len(results) > MAX_DISPLAY_ROWS
+        visible = results[:MAX_DISPLAY_ROWS]
+
         st.dataframe(
-            {columns_or_error[i]: [row[i] for row in results] for i in range(len(columns_or_error))}
+            {columns_or_error[i]: [row[i] for row in visible]
+             for i in range(len(columns_or_error))}
         )
+
+        if truncated:
+            st.caption(
+                f"Showing the first {MAX_DISPLAY_ROWS:,} rows. Add a LIMIT, or "
+                f"aggregate, to see a complete result."
+            )
+        else:
+            st.caption(f"{len(visible):,} row{'s' if len(visible) != 1 else ''}.")

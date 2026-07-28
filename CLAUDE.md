@@ -16,9 +16,23 @@ Single module, `app.py`:
 - **Migrations** — plain SQL in `migrations/`, applied by
   `scripts/run_migrations.py`.
 
-Schema: `customers(customer_id, name, city, email)`,
-`products(product_id, product_name, category, price)`,
-`orders(order_id, customer_id, product_id, order_date, quantity, total)`.
+## Schema
+
+17 tables, a star schema built for practising advanced SQL and Power BI
+modelling. **Do not hardcode it anywhere** — `describe_schema()` introspects it
+at runtime and feeds it to the prompt, so the two cannot drift apart.
+
+Dimensions: `dim_date`, `regions` → `countries` → `cities`, `employees`
+(self-referencing `manager_id`), `categories` (self-referencing
+`parent_category_id`), `suppliers`, `products`, `product_price_history`
+(type-2 SCD), `customers`, `campaigns`, `campaign_customers` (bridge).
+
+Facts, at four different grains: `order_items` (line), `returns` (line),
+`payments` (order), `inventory_snapshots` (product-month). Aggregate each
+separately before combining — joining them directly double counts.
+
+~326k rows, 47 MB. Regenerate with `python scripts/seed_data.py`
+(deterministic: `random.seed(42)`).
 
 ## Things that will bite you
 
@@ -34,6 +48,16 @@ These were all discovered the hard way; please don't undo them.
 - **Columns are snake_case deliberately.** Postgres folds unquoted identifiers
   to lowercase; mixed-case names would need double-quoting in every generated
   query, which an LLM will not do reliably.
+- **Foreign keys come from `pg_catalog`, not `information_schema`.**
+  `information_schema.constraint_column_usage` only reveals constraints on
+  tables the current role *owns*. The app connects as a role that owns nothing,
+  so it silently returns zero foreign keys.
+- **Results are capped at `MAX_DISPLAY_ROWS` via `fetchmany`.** `order_items`
+  has 136k rows and Streamlit Cloud gives the app ~1 GB; never materialise a
+  full result set.
+- **Migrations are tracked in `schema_migrations`** and each file runs once.
+  `001` drops and recreates tables, so re-running it would destroy data. Add a
+  new numbered file rather than editing an applied one.
 - **`exec_driver_sql`, not `text()`.** `text()` treats `:` as a bind parameter
   and breaks on casts like `::int`.
 - **Supabase connection strings**: the pooler requires the project ref in the
