@@ -44,6 +44,10 @@ jobs:
       - uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # Print the full result inline. Without this a failure shows only
+          # "is_error:true" and the real message stays buried in
+          # claude-execution-output.json.
+          show_full_output: true
           # No --model override: the action picks a default appropriate to the
           # credential. Pinning one here failed immediately against an OAuth
           # subscription token, which does not necessarily grant access to an
