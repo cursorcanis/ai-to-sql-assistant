@@ -1,0 +1,15 @@
+# Normalize line endings to LF everywhere.
+#
+# app.py was once re-saved by a Windows editor with CRLF, which made all 352
+# lines show as modified and would have buried any real change in the diff.
+# text=auto lets git detect text files; eol=lf stores *and* checks out LF, so a
+# Windows editor rewriting the file no longer produces a whole-file diff.
+* text=auto eol=lf
+
+# Binary files git should never touch.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.pdf binary
+*.ico binary
