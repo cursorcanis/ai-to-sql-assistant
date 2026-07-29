@@ -49,8 +49,12 @@ jobs:
           # claude-execution-output.json.
           show_full_output: true
           # No --model override: the action picks a default appropriate to the
-          # credential. Pinning one here failed immediately against an OAuth
-          # subscription token, which does not necessarily grant access to an
-          # arbitrary named model.
+          # credential, currently claude-sonnet-5. Pinning one here is safe if
+          # you want it explicit — an earlier comment blamed the --model pin for
+          # instant failures, but the real cause was a malformed
+          # CLAUDE_CODE_OAUTH_TOKEN secret (a newline from terminal wrapping had
+          # split the token, making the Authorization header unsendable). Set
+          # secrets with `gh secret set NAME --repo <repo> < file`, never by
+          # pasting into the web field.
           claude_args: |
             --max-turns 15
