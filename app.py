@@ -6,6 +6,7 @@ import os
 from openai import OpenAI, APIError, APITimeoutError, RateLimitError
 from sqlalchemy import create_engine
 from sqlalchemy.exc import SQLAlchemyError
+from theme import inject as inject_theme
 
 load_dotenv()
 
@@ -276,7 +277,11 @@ def run_sql_query(query):
 
 
 # --- Streamlit UI ---
-st.set_page_config(page_title="AI SQL Assistant")
+st.set_page_config(page_title="AI SQL Assistant", page_icon="◆")
+
+# CSS layer for the parts config.toml can't reach: density, chrome removal,
+# focus states. Must run immediately after set_page_config.
+inject_theme()
 
 st.title("AI SQL Assistant")
 st.write("Ask a question in plain English, and I’ll help you turn it into SQL.")

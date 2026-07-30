@@ -7,10 +7,10 @@ __pycache__/
 .venv/
 venv/
 
-# Streamlit — ignore the whole directory, not just secrets.toml. Secrets have
-# a way of ending up in config.toml by mistake, and that file is not secret
-# by default.
-.streamlit/
+# Streamlit — secrets.toml only. config.toml carries the theme and MUST be
+# committed or Streamlit Cloud won't apply it. Never put credentials in it:
+# unlike secrets.toml it is a tracked, public file.
+.streamlit/secrets.toml
 
 # Claude Code tooling config (local, not part of the app)
 .claude/

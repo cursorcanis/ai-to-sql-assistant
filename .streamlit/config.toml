@@ -1,0 +1,32 @@
+[theme]
+base = "dark"
+
+# Palette — monochrome slate with a single low-chroma signal colour.
+# The restraint IS the design. Reserve `primaryColor` for state, never decoration.
+primaryColor            = "#8B93F8"   # signal: focus rings, active tab, run button
+backgroundColor         = "#0A0A0B"   # not pure black — pure black kills depth
+secondaryBackgroundColor = "#121214"  # cards, sidebar, code wells
+textColor               = "#ECECEE"
+linkColor               = "#A8AEFA"
+codeBackgroundColor     = "#0E0E10"
+
+# Shape language: near-square. Rounded corners read "consumer app";
+# 4px reads "developer tool".
+baseRadius       = "4px"
+buttonRadius     = "4px"
+borderColor      = "#26262A"
+dataframeBorderColor = "#26262A"
+showWidgetBorder = true
+
+# Type. The actual @font-face loading happens via the Google Fonts @import
+# in theme.py — that URL pattern is stable, unlike pinned gstatic asset paths.
+font         = "Inter Tight, sans-serif"
+headingFont  = "Inter Tight, sans-serif"
+codeFont     = "JetBrains Mono, monospace"
+
+[client]
+toolbarMode = "minimal"
+showSidebarNavigation = false
+
+[server]
+runOnSave = true
