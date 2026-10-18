@@ -187,10 +187,18 @@ def generate_sql_from_question(question):
                     "where they make the query clearer. "
                     f"Unless the question asks for everything, add a LIMIT of at "
                     f"most {MAX_DISPLAY_ROWS} rows. "
-                    "Write a single read-only SELECT statement. "
-                    "Before returning SQL, briefly explain what the query will do "
-                    "in as many sentences as it takes. Then return SQL only, with "
-                    "no markdown fences."
+                    "Write a single read-only SELECT statement.\n\n"
+                    "If the question is about the database itself rather than "
+                    "its rows (which tables or columns exist, whether there is "
+                    "a price column, what a table contains), answer it with a "
+                    "SELECT over information_schema.columns filtered to "
+                    "table_schema = 'public'. Every question gets a query; never "
+                    "answer in prose alone.\n\n"
+                    "Reply in exactly this format and nothing else:\n"
+                    "1. One to three plain sentences saying what the query "
+                    "returns. Do not think aloud, weigh alternatives, or restate "
+                    "these instructions.\n"
+                    "2. The SQL in a single ```sql fenced block."
                 )
             },
             {"role": "user", "content": question}
@@ -199,8 +207,10 @@ def generate_sql_from_question(question):
 
     reply = (response.choices[0].message.content or "").strip()
 
-    # Remove markdown ``` fences and optional "sql" labels. The prompt asks for
-    # no fences, but models add them anyway often enough to keep this.
+    # The prompt asks for prose, then the SQL in a ```sql fence. The fence is
+    # the reliable delimiter: without it a model that reasons aloud buries the
+    # statement mid-sentence ("So, I'll write: SELECT ..."), no line starts
+    # with SELECT, and the whole reply is rejected as unsafe.
     if "```" in reply:
         parts = reply.split("```")
         if len(parts) >= 2:
@@ -258,7 +268,12 @@ def run_sql_query(query):
 
             # exec_driver_sql, not text(): text() would parse ':' in the query
             # as a bind parameter and choke on casts like '::int'.
-            result = connection.exec_driver_sql(query)
+            #
+            # psycopg2 still reads '%' as a parameter marker, because SQLAlchemy
+            # passes an (empty) parameter dict, so any LIKE '%price%' raised a
+            # TypeError that bypassed the error handling below. Doubling '%' is
+            # psycopg2's escape for a literal percent sign.
+            result = connection.exec_driver_sql(query.replace("%", "%%"))
 
             if result.returns_rows is False:
                 return None, "That query returned no result set."
@@ -311,6 +326,15 @@ if submitted:
         st.stop()
     except APIError as e:
         st.error(f"The model could not be reached: {e}")
+        st.stop()
+    except SQLAlchemyError:
+        # describe_schema() connects before the model is ever called. If the
+        # database is down (a paused free-tier Supabase project, say), this is
+        # the first place it surfaces — show a message, not a raw traceback.
+        st.error(
+            "The database is unavailable right now, so I can't read its "
+            "schema. Please try again in a few minutes."
+        )
         st.stop()
 
     if explanation:
