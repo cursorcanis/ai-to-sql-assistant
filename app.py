@@ -44,7 +44,7 @@ client = OpenAI(
     max_retries=1,
 )
 
-MODEL = "nvidia/nemotron-3-super-120b-a12b:free"
+MODEL = "nvidia/nemotron-3-ultra-550b-a55b:free"
 
 # order_items alone holds ~136k rows. Streamlit Cloud gives the app about 1 GB
 # of RAM, and every returned row is materialised in it — so cap what we fetch
@@ -157,7 +157,7 @@ def describe_schema():
 def generate_sql_from_question(question):
     response = client.chat.completions.create(
         model=MODEL,
-        # Nemotron 3 Super enables reasoning by default; we want bare SQL, not
+        # Nemotron 3 Ultra enables reasoning by default; we want bare SQL, not
         # a chain of thought wrapped around it. Reasoning is optional on this
         # model, so turn it off.
         extra_body={"reasoning": {"enabled": False}},

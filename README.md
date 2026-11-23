@@ -42,7 +42,7 @@ Separately, `migrations/004` revokes all access from Supabase's public API roles
 
 ## Stack
 
-Python · Streamlit · PostgreSQL (Supabase) · SQLAlchemy / psycopg2 · OpenAI SDK pointed at OpenRouter (`nvidia/nemotron-3-super-120b-a12b:free`)
+Python · Streamlit · PostgreSQL (Supabase) · SQLAlchemy / psycopg2 · OpenAI SDK pointed at OpenRouter (`nvidia/nemotron-3-ultra-550b-a55b:free`)
 
 ## Run it locally
 

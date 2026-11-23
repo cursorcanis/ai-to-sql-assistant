@@ -10,7 +10,7 @@ Single module, `app.py`:
 - **Model access** — the `openai` SDK pointed at OpenRouter's compatible
   endpoint (`base_url="https://openrouter.ai/api/v1"`). There is no OpenAI
   account involved; the SDK is just a client. Model is
-  `nvidia/nemotron-3-super-120b-a12b:free`.
+  `nvidia/nemotron-3-ultra-550b-a55b:free`.
 - **Database** — SQLAlchemy engine over `psycopg2`, one pooled engine cached
   with `@st.cache_resource`.
 - **Migrations** — plain SQL in `migrations/`, applied by
